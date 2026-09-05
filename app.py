@@ -751,28 +751,12 @@ def pagina_colpo_docchio(spese: pd.DataFrame, saldo: float):
             m = m[m["data_scadenza"] <= a]
         return float(m["importo"].sum())
 
-    tot_corrente = somma(finestra, inizio_mese, inizio_prossimo - relativedelta(days=1))
-    tot_prossimo = somma(finestra, inizio_prossimo, fine)
-    arretrati = somma(finestra, a=inizio_mese - relativedelta(days=1))
-    tot = tot_corrente + tot_prossimo + arretrati
-    scadute_tot = somma(finestra, a=oggi - relativedelta(days=1))
-
     tot_dom_30 = somma(domic, a=oggi + relativedelta(days=30))
     copre = saldo - tot_dom_30
 
-    def blocco_kpi(lab, val, col=None):
-        return (f'<div class="kpi"><div class="lab">{lab}</div>'
-                f'<div class="val" style="color:{col or C["text"]}">{val}</div></div>')
-
-    st.markdown(
-        '<div class="fascia-kpi">'
-        + blocco_kpi("Totale due mesi", eur(tot))
-        + blocco_kpi("Scadute", eur(scadute_tot), C["rosso"] if scadute_tot else C["muted"])
-        + blocco_kpi("Conto dopo domiciliazioni 30 g", eur(copre),
-                     C["verde"] if copre >= 0 else C["rosso"])
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+    if tot_dom_30 > 0 and copre < 0:
+        st.error(f"Il conto non copre le domiciliazioni dei prossimi 30 giorni: "
+                 f"mancano {eur(abs(copre))}.")
 
     st.markdown(
         '<div class="due-colonne">'
