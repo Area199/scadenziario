@@ -161,9 +161,34 @@ def login() -> bool:
 # Database
 # ----------------------------------------------------------------------------
 
+def _cerca_secret(*nomi):
+    """Cerca una chiave in cima ai secrets o dentro una sezione [supabase]."""
+    sezione = {}
+    if "supabase" in st.secrets:
+        sezione = dict(st.secrets["supabase"])
+    for nome in nomi:
+        for fonte in (st.secrets, sezione):
+            for k in list(fonte.keys()):
+                if k.lower() == nome.lower():
+                    return fonte[k]
+    return None
+
+
 @st.cache_resource
 def db() -> Client:
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    url = _cerca_secret("SUPABASE_URL", "url", "supabase_url")
+    key = _cerca_secret("SUPABASE_KEY", "key", "supabase_key",
+                        "SUPABASE_ANON_KEY", "anon_key", "supabase_anon_key")
+    if not url or not key:
+        trovate = ", ".join(k for k in st.secrets.keys() if k != "auth") or "nessuna"
+        st.error(
+            "Configurazione Supabase incompleta.\n\n"
+            f"Righe trovate nei secrets: {trovate}.\n\n"
+            "Servono l'indirizzo del progetto e la chiave anon, in cima ai secrets "
+            "oppure in una sezione [supabase]."
+        )
+        st.stop()
+    return create_client(str(url), str(key))
 
 
 COLONNE_SPESE = ["id", "descrizione", "categoria", "importo", "data_scadenza", "tipo",
