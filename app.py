@@ -77,7 +77,7 @@ st.markdown(
 
       .due-colonne {{ display: grid; grid-template-columns: 1fr 1fr; gap: .7rem;
                       align-items: start; }}
-      .fascia-kpi {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem;
+      .fascia-kpi {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem;
                      margin-bottom: .9rem; }}
       .colonna {{ background: {C['surface']}; border: 1px solid {C['line']};
                   border-radius: 8px; padding: .8rem .9rem; min-width: 0; }}
@@ -170,6 +170,12 @@ def testo_accantonamento(importo: float, d: date) -> str:
 
 def giorno_valido(anno: int, mese: int, giorno: int) -> date:
     return date(anno, mese, min(giorno, calendar.monthrange(anno, mese)[1]))
+
+
+def mese_nome(d: date) -> str:
+    nomi = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio",
+            "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"]
+    return nomi[d.month - 1]
 
 
 def mese_label(d: date) -> str:
@@ -719,17 +725,34 @@ def colonna_compatta(df: pd.DataFrame, titolo: str, colore: str, vuota: str) -> 
 
 def pagina_colpo_docchio(spese: pd.DataFrame, saldo: float):
     oggi = date.today()
-    fine = oggi + relativedelta(months=2)
+    inizio_mese = oggi.replace(day=1)
+    inizio_prossimo = inizio_mese + relativedelta(months=1)
+    fine = inizio_prossimo + relativedelta(months=1) - relativedelta(days=1)
+
     attive = spese[~spese["pagata"]].copy() if not spese.empty else spese
     finestra = attive[attive["data_scadenza"] <= fine] if not attive.empty else attive
 
     da_pagare = finestra[finestra["tipo"] == "pagamento"] if not finestra.empty else finestra
     domic = finestra[finestra["tipo"] == "domiciliazione"] if not finestra.empty else finestra
 
-    tot = float(finestra["importo"].sum()) if not finestra.empty else 0.0
-    tot_dom_30 = float(domic[domic["data_scadenza"] <= oggi + relativedelta(days=30)]["importo"].sum()) if not domic.empty else 0.0
+    def somma(df, da=None, a=None):
+        if df.empty:
+            return 0.0
+        m = df
+        if da:
+            m = m[m["data_scadenza"] >= da]
+        if a:
+            m = m[m["data_scadenza"] <= a]
+        return float(m["importo"].sum())
+
+    tot_corrente = somma(finestra, inizio_mese, inizio_prossimo - relativedelta(days=1))
+    tot_prossimo = somma(finestra, inizio_prossimo, fine)
+    arretrati = somma(finestra, a=inizio_mese - relativedelta(days=1))
+    tot = tot_corrente + tot_prossimo + arretrati
+    scadute_tot = somma(finestra, a=oggi - relativedelta(days=1))
+
+    tot_dom_30 = somma(domic, a=oggi + relativedelta(days=30))
     copre = saldo - tot_dom_30
-    scadute_tot = float(finestra[finestra["data_scadenza"] < oggi]["importo"].sum()) if not finestra.empty else 0.0
 
     def blocco_kpi(lab, val, col=None):
         return (f'<div class="kpi"><div class="lab">{lab}</div>'
@@ -737,7 +760,9 @@ def pagina_colpo_docchio(spese: pd.DataFrame, saldo: float):
 
     st.markdown(
         '<div class="fascia-kpi">'
-        + blocco_kpi("Totale due mesi", eur(tot))
+        + blocco_kpi(mese_nome(inizio_mese), eur(tot_corrente))
+        + blocco_kpi(mese_nome(inizio_prossimo), eur(tot_prossimo))
+        + blocco_kpi("Totale due mesi", eur(tot), C["ambra"])
         + blocco_kpi("Scadute", eur(scadute_tot), C["rosso"] if scadute_tot else C["muted"])
         + blocco_kpi("Conto dopo domiciliazioni 30 g", eur(copre),
                      C["verde"] if copre >= 0 else C["rosso"])
