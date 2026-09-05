@@ -86,7 +86,10 @@ st.markdown(
                   font-weight: 600; font-size: .95rem; padding-bottom: .5rem;
                   border-bottom: 1px solid {C['line']}; margin-bottom: .6rem; }}
       .colhead span {{ font-variant-numeric: tabular-nums; font-weight: 500; }}
-      .mesehead {{ color: {C['muted']}; font-size: .74rem; margin: .75rem 0 .3rem 0; }}
+      .mesehead {{ color: {C['muted']}; font-size: .74rem; margin: .75rem 0 .3rem 0;
+                   display: flex; justify-content: space-between; align-items: baseline;
+                   gap: .4rem; border-bottom: 1px dotted {C['line']}; padding-bottom: .18rem; }}
+      .mesehead span {{ font-variant-numeric: tabular-nums; }}
       .mesehead:first-child {{ margin-top: 0; }}
       .mini {{ display: grid; grid-template-columns: 1fr auto; gap: .1rem .5rem;
                align-items: baseline; padding: .35rem 0 .35rem .5rem;
@@ -707,7 +710,8 @@ def colonna_compatta(df: pd.DataFrame, titolo: str, colore: str, vuota: str) -> 
                 f'{eur(r["importo"])}</span></div>')
 
     if not scadute.empty:
-        html.append(f'<div class="mesehead" style="color:{C["rosso"]}">scadute</div>')
+        html.append(f'<div class="mesehead" style="color:{C["rosso"]}">scadute'
+                    f'<span>{eur(float(scadute["importo"].sum()))}</span></div>')
         html += [riga(r, rosso=True) for _, r in scadute.iterrows()]
 
     mese_corrente = None
@@ -715,7 +719,9 @@ def colonna_compatta(df: pd.DataFrame, titolo: str, colore: str, vuota: str) -> 
         etichetta = mese_label(r["data_scadenza"])
         if etichetta != mese_corrente:
             mese_corrente = etichetta
-            html.append(f'<div class="mesehead">{etichetta}</div>')
+            quel_mese = future[[mese_label(d) == etichetta for d in future["data_scadenza"]]]
+            html.append(f'<div class="mesehead">{etichetta}'
+                        f'<span>{eur(float(quel_mese["importo"].sum()))}</span></div>')
         rosso = giorni_a(r["data_scadenza"]) <= 7
         html.append(riga(r, rosso=rosso))
 
@@ -760,9 +766,7 @@ def pagina_colpo_docchio(spese: pd.DataFrame, saldo: float):
 
     st.markdown(
         '<div class="fascia-kpi">'
-        + blocco_kpi(mese_nome(inizio_mese), eur(tot_corrente))
-        + blocco_kpi(mese_nome(inizio_prossimo), eur(tot_prossimo))
-        + blocco_kpi("Totale due mesi", eur(tot), C["ambra"])
+        + blocco_kpi("Totale due mesi", eur(tot))
         + blocco_kpi("Scadute", eur(scadute_tot), C["rosso"] if scadute_tot else C["muted"])
         + blocco_kpi("Conto dopo domiciliazioni 30 g", eur(copre),
                      C["verde"] if copre >= 0 else C["rosso"])
