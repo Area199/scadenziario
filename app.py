@@ -119,6 +119,21 @@ def accantonamento(importo: float, d: date):
     return importo / g, importo * 7 / g, importo * 30.44 / g
 
 
+def testo_accantonamento(importo: float, d: date) -> str:
+    """Solo i periodi che rientrano nel tempo rimanente: niente rate
+    mensili più grandi dell'importo totale."""
+    g = giorni_a(d)
+    if g < 1:
+        return f"Serve subito l'intero importo · {eur(importo)}"
+    al_g, a_set, al_mese = accantonamento(importo, d)
+    voci = [f"{eur(al_g)} al giorno"]
+    if g >= 7:
+        voci.append(f"{eur(a_set)} a settimana")
+    if g >= 31:
+        voci.append(f"{eur(al_mese)} al mese")
+    return "Da accantonare · " + " · ".join(voci)
+
+
 def giorno_valido(anno: int, mese: int, giorno: int) -> date:
     return date(anno, mese, min(giorno, calendar.monthrange(anno, mese)[1]))
 
@@ -245,6 +260,28 @@ def elimina_spesa(spesa_id: str):
     db().table("casa_spese").delete().eq("id", spesa_id).execute()
 
 
+def aggiorna_spesa(spesa_id: str, dati: dict):
+    db().table("casa_spese").update(dati).eq("id", spesa_id).execute()
+
+
+def aggiorna_gruppo(gruppo_id: str, dati: dict, da_data: date = None):
+    """Aggiorna le voci non pagate di un piano (rate o ricorrente)."""
+    q = db().table("casa_spese").update(dati).eq("gruppo_id", gruppo_id).eq("pagata", False)
+    if da_data:
+        q = q.gte("data_scadenza", da_data.isoformat())
+    q.execute()
+
+
+def aggiorna_ricorrente(ric_id: str, dati: dict):
+    db().table("casa_ricorrenti").update(dati).eq("id", ric_id).execute()
+
+
+def elimina_gruppo(gruppo_id: str):
+    """Cancella le voci future non pagate di un piano; lo storico resta."""
+    db().table("casa_spese").delete().eq("gruppo_id", gruppo_id).eq("pagata", False)\
+        .gte("data_scadenza", date.today().isoformat()).execute()
+
+
 def genera_da_ricorrenti():
     """Crea le scadenze delle spese ricorrenti fino all'orizzonte, senza duplicati."""
     ric = carica_ricorrenti()
@@ -258,13 +295,16 @@ def genera_da_ricorrenti():
 
     oggi = date.today()
     limite = oggi + relativedelta(months=ORIZZONTE_MESI)
+    # Si generano anche le occorrenze passate (fino a 12 mesi indietro),
+    # così le non pagate restano visibili come scadute.
+    minimo = oggi - relativedelta(months=12)
     nuove = []
 
     for _, r in ric.iterrows():
         if not r["attiva"]:
             continue
         inizio = r["data_inizio"]
-        cursore = max(inizio.replace(day=1), oggi.replace(day=1))
+        cursore = max(inizio, minimo).replace(day=1)
         while cursore <= limite:
             diff = (cursore.year - inizio.year) * 12 + (cursore.month - inizio.month)
             if diff >= 0 and diff % int(r["ogni_mesi"]) == 0:
@@ -290,7 +330,70 @@ def genera_da_ricorrenti():
 # Componenti
 # ----------------------------------------------------------------------------
 
-def riga_voce(row, mostra_accantonamento=True, archivio=False):
+def form_modifica(row, residuo=None):
+    """Modulo di modifica di una voce, con estensione a tutto il piano."""
+    rid = row["id"]
+    gruppo = row.get("gruppo_id")
+    ha_gruppo = bool(gruppo) and pd.notna(gruppo)
+    ricorrente = row.get("origine") == "ricorrente"
+
+    with st.container(border=True):
+        c1, c2, c3 = st.columns([2, 1, 1])
+        desc = c1.text_input("Descrizione", value=row["descrizione"], key=f"m_d_{rid}")
+        imp = c2.number_input("Importo €", min_value=0.0, value=float(row["importo"]),
+                              step=10.0, format="%.2f", key=f"m_i_{rid}")
+        scad = c3.date_input("Scadenza", value=row["data_scadenza"], key=f"m_s_{rid}")
+
+        c4, c5 = st.columns(2)
+        opzioni = list(CATEGORIE)
+        attuale = row.get("categoria") or "Altro"
+        if attuale not in opzioni:
+            opzioni.append(attuale)
+        cat = c4.selectbox("Categoria", opzioni, index=opzioni.index(attuale), key=f"m_c_{rid}")
+        tipo = c5.selectbox("Tipo", ["Da pagare", "Domiciliazione"],
+                            index=1 if row["tipo"] == "domiciliazione" else 0, key=f"m_t_{rid}")
+
+        ambito = None
+        if ha_gruppo:
+            scelte = (["Solo questa occorrenza", "Tutto il piano ricorrente"] if ricorrente
+                      else ["Solo questa rata", "Questa e le rate successive"])
+            ambito = st.radio("Applica la modifica a", scelte, key=f"m_a_{rid}",
+                              horizontal=True)
+            if residuo:
+                st.caption(f"Piano: {residuo['n']} voci ancora aperte "
+                           f"per {eur(residuo['importo'])}.")
+
+        b1, b2, b3 = st.columns([1, 1, 2])
+        if b1.button("Salva", key=f"m_ok_{rid}", type="primary", use_container_width=True):
+            tipo_db = "domiciliazione" if tipo == "Domiciliazione" else "pagamento"
+            comuni = {"descrizione": desc, "categoria": cat, "importo": imp, "tipo": tipo_db}
+            aggiorna_spesa(rid, {**comuni, "data_scadenza": scad.isoformat()})
+
+            if ambito and ambito.startswith("Questa e"):
+                aggiorna_gruppo(gruppo, comuni, da_data=row["data_scadenza"])
+            elif ambito and ambito.startswith("Tutto"):
+                aggiorna_gruppo(gruppo, comuni)
+                aggiorna_ricorrente(gruppo, {"descrizione": desc, "categoria": cat,
+                                             "importo": imp, "tipo": tipo_db})
+
+            st.session_state.pop("modifica_id", None)
+            st.rerun()
+
+        if b2.button("Annulla", key=f"m_no_{rid}", use_container_width=True):
+            st.session_state.pop("modifica_id", None)
+            st.rerun()
+
+        if ha_gruppo and b3.button(
+                "Elimina tutto il piano" if not ricorrente else "Elimina piano e ricorrente",
+                key=f"m_del_{rid}", use_container_width=True):
+            elimina_gruppo(gruppo)
+            if ricorrente:
+                db().table("casa_ricorrenti").delete().eq("id", gruppo).execute()
+            st.session_state.pop("modifica_id", None)
+            st.rerun()
+
+
+def riga_voce(row, archivio=False, residui=None):
     domic = row["tipo"] == "domiciliazione"
     if archivio:
         etichetta, colore = "pagata", C["verde"]
@@ -299,18 +402,22 @@ def riga_voce(row, mostra_accantonamento=True, archivio=False):
         if domic and giorni_a(row["data_scadenza"]) > GIORNI_ALERT:
             colore = C["domic"]
 
-    rata = ""
+    gruppo = row.get("gruppo_id")
+    residuo = (residui or {}).get(str(gruppo)) if gruppo and pd.notna(gruppo) else None
+
+    dettaglio = ""
     if pd.notna(row.get("rata_tot")) and row.get("rata_tot"):
-        rata = f" · rata {int(row['rata_num'])}/{int(row['rata_tot'])}"
+        dettaglio = f" · rata {int(row['rata_num'])}/{int(row['rata_tot'])}"
+        if residuo and not archivio:
+            dettaglio += f" · restano {eur(residuo['importo'])} in {residuo['n']} rate"
+    elif row.get("origine") == "ricorrente":
+        dettaglio = " · ricorrente"
 
     tipo_tag = (f'<span class="tag" style="color:{C["domic"]}">domiciliazione</span>'
                 if domic else "")
-
     acc_html = ""
-    if mostra_accantonamento and not archivio:
-        g, s, m = accantonamento(row["importo"], row["data_scadenza"])
-        acc_html = (f'<div class="accant">Da accantonare · {eur(g)} al giorno '
-                    f'· {eur(s)} a settimana · {eur(m)} al mese</div>')
+    if not archivio:
+        acc_html = f'<div class="accant">{testo_accantonamento(row["importo"], row["data_scadenza"])}</div>'
 
     data_txt = row["data_scadenza"].strftime("%d/%m/%Y")
     cat = row.get("categoria") or "—"
@@ -324,7 +431,7 @@ def riga_voce(row, mostra_accantonamento=True, archivio=False):
                 <span class="imp">{eur(row['importo'])}</span>
               </div>
               <div class="riga2">{data_txt} · <span style="color:{colore}">{etichetta}</span>
-                 · {cat}{rata} {tipo_tag}</div>
+                 · {cat}{dettaglio} {tipo_tag}</div>
               {acc_html}
             </div>""",
             unsafe_allow_html=True,
@@ -338,9 +445,15 @@ def riga_voce(row, mostra_accantonamento=True, archivio=False):
             if st.button("Pagata", key=f"pay_{row['id']}", use_container_width=True):
                 segna_pagata(row["id"], True)
                 st.rerun()
+            if st.button("Modifica", key=f"mod_{row['id']}", use_container_width=True):
+                st.session_state.modifica_id = row["id"]
+                st.rerun()
             if st.button("Elimina", key=f"del_{row['id']}", use_container_width=True):
                 elimina_spesa(row["id"])
                 st.rerun()
+
+    if not archivio and st.session_state.get("modifica_id") == row["id"]:
+        form_modifica(row, residuo)
 
 
 def kpi(label: str, valore: str, colore: str = None):
@@ -449,24 +562,40 @@ def pagina_scadenze(spese: pd.DataFrame, saldo: float):
             )
             st.warning(f"In scadenza entro {GIORNI_ALERT} giorni ({len(alert)}): {righe}")
 
+    # --- Residui per piano (rate e ricorrenti) ---
+    residui = {}
+    if not attive.empty:
+        con_gruppo = attive[attive["gruppo_id"].notna()]
+        for g, blocco in con_gruppo.groupby("gruppo_id"):
+            residui[str(g)] = {"n": len(blocco), "importo": float(blocco["importo"].sum())}
+
     # --- Elenco cronologico ---
+    if not attive.empty and not scadute.empty:
+        st.markdown(f'<div class="sezione" style="color:{C["rosso"]}">'
+                    f'Scadute · {eur(float(scadute["importo"].sum()))}</div>',
+                    unsafe_allow_html=True)
+        for _, r in scadute.sort_values("data_scadenza").iterrows():
+            riga_voce(r, residui=residui)
+
+    future = attive[attive["data_scadenza"] >= oggi] if not attive.empty else attive
+
     st.markdown('<div class="sezione">Da pagare</div>', unsafe_allow_html=True)
-    da_pagare = attive[attive["tipo"] == "pagamento"] if not attive.empty else attive
+    da_pagare = future[future["tipo"] == "pagamento"] if not future.empty else future
     if da_pagare.empty:
         st.caption("Nessuna scadenza aperta. Aggiungine una dalla scheda Aggiungi.")
     else:
         for _, r in da_pagare.sort_values("data_scadenza").iterrows():
-            riga_voce(r)
+            riga_voce(r, residui=residui)
 
     st.markdown('<div class="sezione">Domiciliazioni · addebito automatico</div>',
                 unsafe_allow_html=True)
     st.caption("Non devi pagarle tu: controlla solo che il conto sia capiente.")
-    dom = attive[attive["tipo"] == "domiciliazione"] if not attive.empty else attive
+    dom = future[future["tipo"] == "domiciliazione"] if not future.empty else future
     if dom.empty:
         st.caption("Nessuna domiciliazione in programma.")
     else:
         for _, r in dom.sort_values("data_scadenza").iterrows():
-            riga_voce(r)
+            riga_voce(r, residui=residui)
 
 
 def pagina_aggiungi():
