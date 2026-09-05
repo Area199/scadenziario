@@ -759,7 +759,7 @@ def pagina_colpo_docchio(spese: pd.DataFrame, saldo: float):
                "una voce vai su Scadenze.")
 
 
-
+def pagina_scadenze(spese: pd.DataFrame, saldo: float):
     oggi = date.today()
     attive = spese[~spese["pagata"]].copy() if not spese.empty else spese
     limite = oggi + relativedelta(months=ORIZZONTE_MESI)
