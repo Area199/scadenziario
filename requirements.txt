@@ -1,0 +1,5 @@
+streamlit>=1.36
+supabase>=2.6
+pandas>=2.2
+plotly>=5.22
+python-dateutil>=2.9
