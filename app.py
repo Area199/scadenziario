@@ -597,18 +597,18 @@ def riga_voce(row, archivio=False, residui=None):
 
     c1, c2 = st.columns([6, 1.5])
     with c1:
-        st.markdown(
-            f"""<div class="voce{' dom' if domic else ''}" style="border-left-color:{colore}">
-              <div class="riga1">
-                <span class="desc">{row['descrizione']}</span>
-                <span class="imp">{eur(row['importo'])}</span>
-              </div>
-              <div class="riga2">{data_txt} · <span style="color:{colore}">{etichetta}</span>
-                 · {cat}{dettaglio} {tipo_tag}</div>
-              {acc_html}
-            </div>""",
-            unsafe_allow_html=True,
+        html = (
+            f'<div class="voce{" dom" if domic else ""}" '
+            f'style="border-left-color:{colore}">'
+            f'<div class="riga1"><span class="desc">{row["descrizione"]}</span>'
+            f'<span class="imp">{eur(row["importo"])}</span></div>'
+            f'<div class="riga2">{data_txt} · '
+            f'<span style="color:{colore}">{etichetta}</span> · {cat}{dettaglio}'
+            f'{tipo_tag}</div>'
+            f'{acc_html}'
+            f'</div>'
         )
+        st.markdown(html, unsafe_allow_html=True)
     with c2:
         if archivio:
             if st.button("Riapri", key=f"riapri_{row['id']}", use_container_width=True):
@@ -1053,11 +1053,11 @@ def pagina_impostazioni(saldo: float):
             stato = "attiva" if r["attiva"] else "sospesa"
             colore = C["verde"] if r["attiva"] else C["muted"]
             c1.markdown(
-                f"""<div class="voce" style="border-left-color:{colore}">
-                  <div class="riga1"><span class="desc">{r['descrizione']}</span>
-                  <span class="imp">{eur(r['importo'])}</span></div>
-                  <div class="riga2">giorno {int(r['giorno_mese'])} · ogni {int(r['ogni_mesi'])} mese/i
-                  · {r['categoria']} · {stato}</div></div>""",
+                f'<div class="voce" style="border-left-color:{colore}">'
+                f'<div class="riga1"><span class="desc">{r["descrizione"]}</span>'
+                f'<span class="imp">{eur(r["importo"])}</span></div>'
+                f'<div class="riga2">giorno {int(r["giorno_mese"])} · ogni '
+                f'{int(r["ogni_mesi"])} mese/i · {r["categoria"]} · {stato}</div></div>',
                 unsafe_allow_html=True)
             if c2.button("Sospendi" if r["attiva"] else "Riattiva", key=f"tog_{r['id']}",
                          use_container_width=True):
